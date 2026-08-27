@@ -8,7 +8,7 @@ import uiautomator2 as u2
 
 SERIAL = ""          # ADB serial or IP:PORT
 TARGET_USERNAME = "" # Instagram username
-TARGET_COUNT = 1      # Number of new Likes
+TARGET_COUNT = 0      # Number of new Likes
 
 PROFILE_SCROLL_ID = (
     "com.instagram.android:id/"
@@ -26,6 +26,7 @@ SEARCH_TAB_ID = "com.instagram.android:id/search_tab"
 SEARCH_INPUT_ID = "com.instagram.android:id/action_bar_search_edit_text"
 SEARCH_RESULT_CONTAINER_ID = "com.instagram.android:id/row_search_user_container"
 SEARCH_RESULT_USERNAME_ID = "com.instagram.android:id/row_search_user_username"
+SEARCH_RESULTS_SCROLL_ID = "com.instagram.android:id/recycler_view"
 
 PROFILE_TITLE_ID = "com.instagram.android:id/action_bar_title"
 PROFILE_TAB_ID = "com.instagram.android:id/profile_tab_icon_view"
@@ -37,6 +38,38 @@ LIKE_BUTTON_ID = "com.instagram.android:id/row_feed_button_like"
 # ============================================================
 # HELPER FUNCTIONS
 # ============================================================
+
+def find_exact_search_result(max_scrolls=3):
+    result_xpath = (
+        f'//*[@resource-id="{SEARCH_RESULT_CONTAINER_ID}"]'
+        f'[.//*[@resource-id="{SEARCH_RESULT_USERNAME_ID}" '
+        f'and @text="{TARGET_USERNAME}"]]'
+    )
+
+    for attempt in range(max_scrolls + 1):
+        search_result = d.xpath(result_xpath)
+
+        if search_result.wait(timeout=3):
+            return search_result
+
+        if attempt >= max_scrolls:
+            break
+
+        print(
+            f"Target not visible. "
+            f"Scrolling search results ({attempt + 1}/{max_scrolls})..."
+        )
+
+        scroller = d(resourceId=SEARCH_RESULTS_SCROLL_ID)
+
+        if not scroller.exists(timeout=3):
+            print("Search results container not found.")
+            break
+
+        scroller.scroll.vert.forward(steps=50)
+        time.sleep(1)
+
+    return None
 
 def get_total_profile_posts():
     post_count_element = d(resourceId=PROFILE_POST_COUNT_ID)
@@ -51,13 +84,14 @@ def get_total_profile_posts():
         or info.get("text")
         or ""
     )
+    print("Raw post count:", raw_value)
 
-    match = re.search(r"\d+", raw_value)
+    digits = re.sub(r"\D", "", raw_value)
 
-    if not match:
+    if not digits:
         return None
 
-    return int(match.group())
+    return int(digits)
 
 
 def get_visible_post_data():
@@ -214,8 +248,11 @@ print("Device connected.")
 # ============================================================
 
 print("\n[1] Opening Instagram...")
+d.app_stop(INSTAGRAM_PACKAGE)
+time.sleep(1)
+
 d.app_start(INSTAGRAM_PACKAGE)
-time.sleep(2)
+time.sleep(3)
 
 verify_instagram_open()
 print("SUCCESS: Instagram opened.")
@@ -259,6 +296,11 @@ search_input.clear_text()
 search_input.set_text(TARGET_USERNAME)
 
 time.sleep(2)
+
+# Hide keyboard so more search results become visible
+d.press("back")
+time.sleep(1)
+
 print("SUCCESS: Username entered.")
 
 
@@ -268,18 +310,14 @@ print("SUCCESS: Username entered.")
 
 print("\n[5] Looking for exact search result...")
 
-result_xpath = (
-    f'//*[@resource-id="{SEARCH_RESULT_CONTAINER_ID}"]'
-    f'[.//*[@resource-id="{SEARCH_RESULT_USERNAME_ID}" '
-    f'and @text="{TARGET_USERNAME}"]]'
-)
+search_result = find_exact_search_result(max_scrolls=3)
 
-search_result = d.xpath(result_xpath)
-
-if not search_result.wait(timeout=10):
+if search_result is None:
     stop_with_error(
         f'Exact username "{TARGET_USERNAME}" was not found.'
     )
+
+print(f"SUCCESS: Exact result found: {TARGET_USERNAME}")
 
 print(f"SUCCESS: Exact result found: {TARGET_USERNAME}")
 
