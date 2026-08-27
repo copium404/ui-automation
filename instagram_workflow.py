@@ -8,7 +8,7 @@ import uiautomator2 as u2
 
 SERIAL = ""          # ADB serial or IP:PORT
 TARGET_USERNAME = "" # Instagram username
-TARGET_COUNT = 0      # Number of new Likes
+TARGET_COUNT = 0     # Number of new Likes
 
 PROFILE_SCROLL_ID = (
     "com.instagram.android:id/"
@@ -180,59 +180,107 @@ def get_visible_posts():
 
 
 def process_current_post():
-    like_button = d(
-        resourceId=LIKE_BUTTON_ID,
-        description="Like",
-    )
+    all_like_buttons = d(resourceId=LIKE_BUTTON_ID)
 
-    liked_button = d(
-        resourceId=LIKE_BUTTON_ID,
-        description="Liked",
-    )
-
-    state_found = False
-
-    for _ in range(10):
-        if (
-            like_button.exists(timeout=0)
-            or liked_button.exists(timeout=0)
-        ):
-            state_found = True
-            break
-
-        time.sleep(0.5)
-
-    if not state_found:
-        print("    FAILED: Like/Liked state not found.")
+    if all_like_buttons.count == 0:
+        print("    FAILED: Like/Liked button not found.")
         return "FAILED"
 
-    if liked_button.exists(timeout=0):
-        print("    SKIP: Post already liked.")
+    print(f"    Like buttons visible: {all_like_buttons.count}")
+
+    if all_like_buttons.count > 2:
+        print(
+            f"    FAILED: Unexpected number of Like buttons: "
+            f"{all_like_buttons.count}"
+        )
+        return "FAILED"
+
+    button_data = []
+
+    for index in range(all_like_buttons.count):
+        info = all_like_buttons[index].info
+        bounds = info.get("bounds") or {}
+
+        button_data.append(
+            {
+                "index": index,
+                "state": info.get("contentDescription"),
+                "bounds": bounds,
+                "top": bounds.get("top", 0),
+            }
+        )
+
+        print(
+            f"    Like[{index}] "
+            f"state={info.get('contentDescription')} "
+            f"bounds={bounds}"
+        )
+
+    # The opened target post is normally the lowest visible post.
+    target_data = max(
+        button_data,
+        key=lambda item: item["top"],
+    )
+
+    target_index = target_data["index"]
+    target_state = target_data["state"]
+
+    print(
+        f"    Selected Like[{target_index}] "
+        f"state={target_state}"
+    )
+
+    target_button = all_like_buttons[target_index]
+
+    if target_state == "Liked":
+        print("    SKIP: Target post already liked.")
         return "SKIP"
 
-    print("    State: Like")
-    print("    Clicking clickable Like parent...")
-
-    like_parent_xpath = (
-        f'//*[@resource-id="{LIKE_BUTTON_ID}" '
-        f'and @content-desc="Like"]/..'
-    )
-
-    like_parent = d.xpath(like_parent_xpath)
-
-    if not like_parent.wait(timeout=5):
-        print("    FAILED: Clickable Like parent not found.")
+    if target_state != "Like":
+        print(
+            f"    FAILED: Unknown Like state: "
+            f"{target_state}"
+        )
         return "FAILED"
 
-    like_parent.click()
+    print("    State: Like")
+    print("    Clicking target Like...")
 
-    if liked_button.exists(timeout=5):
+    target_button.click()
+    time.sleep(1)
+
+    # Read hierarchy again after click
+    refreshed_buttons = d(resourceId=LIKE_BUTTON_ID)
+
+    if refreshed_buttons.count == 0:
+        print("    FAILED: Like button disappeared.")
+        return "FAILED"
+
+    refreshed_data = []
+
+    for index in range(refreshed_buttons.count):
+        info = refreshed_buttons[index].info
+        bounds = info.get("bounds") or {}
+
+        refreshed_data.append(
+            {
+                "index": index,
+                "state": info.get("contentDescription"),
+                "top": bounds.get("top", 0),
+            }
+        )
+
+    refreshed_target = max(
+        refreshed_data,
+        key=lambda item: item["top"],
+    )
+
+    if refreshed_target["state"] == "Liked":
         print("    SUCCESS: Like -> Liked.")
         return "SUCCESS"
 
-    print("    FAILED: Liked state not detected after click.")
+    print("    FAILED: Target did not change to Liked.")
     return "FAILED"
-
 
 # ============================================================
 # CONNECT DEVICE
@@ -319,9 +367,6 @@ if search_result is None:
 
 print(f"SUCCESS: Exact result found: {TARGET_USERNAME}")
 
-print(f"SUCCESS: Exact result found: {TARGET_USERNAME}")
-
-
 # ============================================================
 # STEP 6 - OPEN TARGET PROFILE
 # ============================================================
@@ -376,6 +421,15 @@ print("SUCCESS: Grid view opened.")
 print("\n[9] Reading profile information...")
 
 total_profile_posts = get_total_profile_posts()
+
+if (
+    total_profile_posts is not None
+    and TARGET_COUNT > total_profile_posts
+):
+    print(
+        f"WARNING: Requested {TARGET_COUNT} new Likes, "
+        f"but profile only has {total_profile_posts} posts."
+    )
 
 if total_profile_posts is not None:
     print(f"Total profile posts : {total_profile_posts}")
@@ -534,6 +588,11 @@ print("Scrolls         :", scroll_count)
 
 if success_count >= TARGET_COUNT:
     print("Result          : TARGET COMPLETED")
+elif (
+    total_profile_posts is not None
+    and len(processed_posts) >= total_profile_posts
+):
+    print("Result          : PARTIAL - INSUFFICIENT AVAILABLE POSTS")
 else:
     print("Result          : PARTIAL")
 
